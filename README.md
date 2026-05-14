@@ -158,9 +158,10 @@ A restore point is always created — use it if anything goes wrong.
 **0xb0rn3 | oxbv1**  
 Security tooling, privacy, and open-source automation.
 
-- GitHub: [@0xb0rn3](https://github.com/0xb0rn3)  
-- Discord: `oxbv1`  
-- X/Twitter: [@oxbv1](https://twitter.com/oxbv1)  
+- GitHub: [@0xb0rn3](https://github.com/0xb0rn3)
+- Website: [oxborn3.com](https://oxborn3.com)
+- Discord: `oxbv1`
+- X/Twitter: [@oxbv1](https://twitter.com/oxbv1)
 - Email: 0xb0rn3@proton.me
 
 ---

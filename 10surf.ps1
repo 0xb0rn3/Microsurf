@@ -1,18 +1,78 @@
 #Requires -RunAsAdministrator
 <#
+─────────────────────────────────────────────────────────────────────────────
+  ███╗   ███╗██╗ ██████╗██████╗  ██████╗ ███████╗██╗   ██╗██████╗ ███████╗
+  ████╗ ████║██║██╔════╝██╔══██╗██╔═══██╗██╔════╝██║   ██║██╔══██╗██╔════╝
+  ██╔████╔██║██║██║     ██████╔╝██║   ██║███████╗██║   ██║██████╔╝█████╗
+  ██║╚██╔╝██║██║██║     ██╔══██╗██║   ██║╚════██║██║   ██║██╔══██╗██╔══╝
+  ██║ ╚═╝ ██║██║╚██████╗██║  ██║╚██████╔╝███████║╚██████╔╝██║  ██║██║
+  ╚═╝     ╚═╝╚═╝ ╚═════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝
+─────────────────────────────────────────────────────────────────────────────
+  Script  : 10surf.ps1
+  Version : 1.0.0
+  Target  : Windows 10 ONLY (21H2 / 22H2 / 23H2 / latest release)
+  Repo    : https://github.com/0xb0rn3/Microsurf
+  Author  : 0xb0rn3 | oxbv1
+  Website : https://oxborn3.com
+  Contact : 0xb0rn3@proton.me
+  Discord : oxbv1
+  Twitter : @oxbv1
+─────────────────────────────────────────────────────────────────────────────
+  Built for people who don't trust them with their data.
+─────────────────────────────────────────────────────────────────────────────
+
 .SYNOPSIS
-    Windows 10 Privacy Hardening Script
+    Windows 10 privacy hardening + optional silent Windows 11 upgrade.
+
 .DESCRIPTION
-    Disables telemetry, data collection, Cortana, advertising ID,
-    diagnostic tracking services, and phoning-home behaviors.
-    Tested on Windows 10 21H2 / 22H2 / 23H2 (latest).
+    Strips Microsoft's entire data collection pipeline from Windows 10:
+    telemetry, Cortana, advertising ID, activity history, app permissions,
+    delivery optimization, LLMNR, WiFi Sense, error reporting, and more.
+    Also fetches and stages the latest stable cumulative KB update without
+    requiring a Microsoft account, and optionally performs a silent in-place
+    upgrade to Windows 11 via a 4-method fallthrough engine.
+
+    !! THIS SCRIPT TARGETS WINDOWS 10 ONLY !!
+    Running it on Windows 11, Windows Server, or any other OS is
+    unsupported and may produce unexpected results.
+
 .NOTES
-    Run as Administrator in an elevated PowerShell session.
-    A System Restore Point is created before any changes.
+    - Must be run as Administrator in an elevated PowerShell session
+    - A System Restore Point is created automatically before any changes
+    - Roll back at any time with: rstrui.exe
+    - Quick start: irm https://raw.githubusercontent.com/0xb0rn3/Microsurf/main/10surf.ps1 | iex
 #>
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "SilentlyContinue"
+
+# ── OS Guard — abort if not Windows 10 ───────────────────────────────────────
+$osInfo    = Get-CimInstance Win32_OperatingSystem
+$osBuild   = [int]$osInfo.BuildNumber
+$osCaption = $osInfo.Caption
+
+# Windows 10 builds: 10240 (1507) through 19045 (22H2 / latest)
+# Windows 11 starts at build 22000
+if ($osBuild -ge 22000 -or $osInfo.Caption -notmatch "Windows 10") {
+    Write-Host @"
+
+  [!] UNSUPPORTED OS DETECTED
+      Detected : $osCaption (Build $osBuild)
+      Required : Windows 10 (any release)
+
+      10surf.ps1 is designed for Windows 10 only.
+      This script will now exit to prevent unintended changes.
+
+"@ -ForegroundColor Red
+    exit 1
+}
+
+Write-Host @"
+
+  [*] OS verified: $osCaption (Build $osBuild) — Windows 10 confirmed.
+
+"@ -ForegroundColor Green
+
 
 # ─── COLORS ──────────────────────────────────────────────────────────────────
 function Write-Header { param($msg) Write-Host "`n[*] $msg" -ForegroundColor Cyan }

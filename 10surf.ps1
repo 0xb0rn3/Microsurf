@@ -445,443 +445,497 @@ try {
     Write-Host "        Ensure the Windows Update service (wuauserv) is running." -ForegroundColor DarkGray
 }
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# 16. WINDOWS 11 UPGRADE — 4-METHOD FALLTHROUGH ENGINE
-#     Method 1 : Fido  (Microsoft CDN direct link via official download API)
-#     Method 2 : Windows 11 Installation Assistant (silent in-place, no ISO)
-#     Method 3 : Media Creation Tool  (silent ISO download + setup)
-#     Method 4 : UUP Dump  (ISO built from Microsoft's own update servers)
+# 16. DEBLOAT — BLOATWARE REMOVAL & SYSTEM OPTIMISATION
+#     Inspired by Win11Debloat (github.com/Raphire/Win11Debloat)
+#     Adapted for Windows 10 by 0xb0rn3 | oxbv1 | oxborn3.com
 # ─────────────────────────────────────────────────────────────────────────────
-Write-Header "Windows 11 Upgrade"
+Write-Header "Debloat — Bloatware Removal & System Optimisation"
 
 Write-Host @"
 
-    Microsurf will attempt to upgrade this machine to the latest
-    stable Windows 11 directly from Microsoft — no sign-in required.
-
-    Methods tried in order (falls through on failure):
-      1. Fido       — direct Microsoft CDN ISO link
-      2. Install Assistant — silent in-place upgrade (no ISO)
-      3. Media Creation Tool — silent ISO + setup
-      4. UUP Dump   — ISO built from Microsoft Update servers
-
-    Apps, settings, and files are preserved (in-place upgrade).
-    GitHub : https://github.com/0xb0rn3/Microsurf
+    This section removes pre-installed bloatware, disables junk
+    features, and tightens system settings — category by category.
+    You'll be asked [Y/N] for each group. Nothing is applied without
+    your confirmation. All changes can be reverted via the Restore
+    Point created at the start of this script.
 
 "@ -ForegroundColor DarkCyan
 
-$upgrade = Read-Host "    Upgrade this machine to Windows 11 now? [Y/N]"
-
-if ($upgrade -notmatch "^[Yy]") {
-    Write-Skip "Windows 11 upgrade skipped."
-} else {
-
-# ── Shared helpers ────────────────────────────────────────────────────────────
-function Get-Win11IsoPath  { return "$env:TEMP\Win11.iso" }
-function Get-Win11ExtractPath { return "$env:SystemDrive\Win11Setup" }
-
-function Test-IsoValid {
-    param([string]$Path)
-    if (-not (Test-Path $Path)) { return $false }
-    return (Get-Item $Path).Length -gt 3GB
+# ── Helper: prompt Y/N ───────────────────────────────────────────────────────
+function Confirm-Debloat {
+    param([string]$Question)
+    $r = Read-Host "    $Question [Y/N]"
+    return $r -match "^[Yy]"
 }
 
-# ── Ensure 7-Zip is available (download portable build if not installed) ──────
-function Get-7ZipExe {
-    # Check common install locations first
-    $candidates = @(
-        "$env:ProgramFiles\7-Zip\7z.exe",
-        "${env:ProgramFiles(x86)}\7-Zip\7z.exe",
-        "$env:TEMP\7z\7z.exe"
+# ── Helper: remove a UWP app (all users, non-fatal) ──────────────────────────
+function Remove-UWPApp {
+    param([string]$AppId, [string]$FriendlyName)
+    try {
+        $pkg = Get-AppxPackage -Name "*$AppId*" -AllUsers -ErrorAction SilentlyContinue
+        if ($pkg) {
+            Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop | Out-Null
+            Write-OK "Removed: $FriendlyName ($AppId)"
+        }
+        # Also remove provisioned package so it won't reinstall for new users
+        $prov = Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
+                Where-Object { $_.PackageName -like "*$AppId*" }
+        if ($prov) {
+            Remove-AppxProvisionedPackage -Online -PackageName $prov.PackageName -ErrorAction SilentlyContinue | Out-Null
+        }
+    } catch {
+        Write-Skip "Could not remove $FriendlyName : $_"
+    }
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# A. BLOATWARE APP REMOVAL
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Host "`n    ── A. Bloatware App Removal ──" -ForegroundColor Yellow
+
+if (Confirm-Debloat "Remove pre-installed bloatware apps (Candy Crush, Clipchamp, Cortana UWP, Bing apps, social media, etc.)?") {
+
+    # Safe-to-remove app list sourced from Config/Apps.json (Win11Debloat)
+    $bloatApps = @(
+        @{ Id = "Clipchamp.Clipchamp";                        Name = "Clipchamp" },
+        @{ Id = "Microsoft.3DBuilder";                        Name = "3D Builder" },
+        @{ Id = "Microsoft.549981C3F5F10";                    Name = "Cortana" },
+        @{ Id = "Microsoft.BingFinance";                      Name = "Bing Finance" },
+        @{ Id = "Microsoft.BingFoodAndDrink";                 Name = "Bing Food & Drink" },
+        @{ Id = "Microsoft.BingHealthAndFitness";             Name = "Bing Health & Fitness" },
+        @{ Id = "Microsoft.BingNews";                         Name = "Bing News" },
+        @{ Id = "Microsoft.BingSports";                       Name = "Bing Sports" },
+        @{ Id = "Microsoft.BingTranslator";                   Name = "Bing Translator" },
+        @{ Id = "Microsoft.BingTravel";                       Name = "Bing Travel" },
+        @{ Id = "Microsoft.BingWeather";                      Name = "Bing Weather" },
+        @{ Id = "Microsoft.Copilot";                          Name = "Copilot" },
+        @{ Id = "Microsoft.Windows.AIHub";                    Name = "Copilot+ AI Hub" },
+        @{ Id = "Microsoft.PCManager";                        Name = "Microsoft PC Manager" },
+        @{ Id = "Microsoft.Getstarted";                       Name = "Get Started" },
+        @{ Id = "Microsoft.Messaging";                        Name = "Messaging" },
+        @{ Id = "Microsoft.Microsoft3DViewer";                Name = "3D Viewer" },
+        @{ Id = "Microsoft.MicrosoftJournal";                 Name = "Microsoft Journal" },
+        @{ Id = "Microsoft.MicrosoftOfficeHub";               Name = "Office Hub" },
+        @{ Id = "Microsoft.MicrosoftPowerBIForWindows";       Name = "Power BI" },
+        @{ Id = "Microsoft.MicrosoftSolitaireCollection";     Name = "Solitaire Collection" },
+        @{ Id = "Microsoft.MicrosoftStickyNotes";             Name = "Sticky Notes" },
+        @{ Id = "Microsoft.MixedReality.Portal";              Name = "Mixed Reality Portal" },
+        @{ Id = "Microsoft.NetworkSpeedTest";                 Name = "Network Speed Test" },
+        @{ Id = "Microsoft.News";                             Name = "Microsoft News" },
+        @{ Id = "Microsoft.Office.OneNote";                   Name = "OneNote (UWP)" },
+        @{ Id = "Microsoft.Office.Sway";                      Name = "Sway" },
+        @{ Id = "Microsoft.OneConnect";                       Name = "One Connect" },
+        @{ Id = "Microsoft.Print3D";                          Name = "Print 3D" },
+        @{ Id = "Microsoft.PowerAutomateDesktop";             Name = "Power Automate" },
+        @{ Id = "Microsoft.SkypeApp";                         Name = "Skype (UWP)" },
+        @{ Id = "Microsoft.Todos";                            Name = "Microsoft To Do" },
+        @{ Id = "Microsoft.Windows.DevHome";                  Name = "Dev Home" },
+        @{ Id = "Microsoft.WindowsAlarms";                    Name = "Alarms & Clock" },
+        @{ Id = "Microsoft.WindowsFeedbackHub";               Name = "Feedback Hub" },
+        @{ Id = "Microsoft.WindowsMaps";                      Name = "Windows Maps" },
+        @{ Id = "Microsoft.WindowsSoundRecorder";             Name = "Sound Recorder" },
+        @{ Id = "Microsoft.XboxApp";                          Name = "Xbox Console Companion" },
+        @{ Id = "Microsoft.ZuneVideo";                        Name = "Movies & TV" },
+        @{ Id = "MicrosoftCorporationII.MicrosoftFamily";     Name = "Family Safety" },
+        @{ Id = "MicrosoftCorporationII.QuickAssist";         Name = "Quick Assist" },
+        @{ Id = "MicrosoftTeams";                             Name = "Microsoft Teams (Old)" },
+        @{ Id = "MSTeams";                                    Name = "Microsoft Teams (New)" },
+        @{ Id = "AdobeSystemsIncorporated.AdobePhotoshopExpress"; Name = "Adobe Photoshop Express" },
+        @{ Id = "Amazon.com.Amazon";                          Name = "Amazon" },
+        @{ Id = "AmazonVideo.PrimeVideo";                     Name = "Prime Video" },
+        @{ Id = "Asphalt8Airborne";                           Name = "Asphalt 8" },
+        @{ Id = "CaesarsSlotsFreeCasino";                     Name = "Caesars Slots" },
+        @{ Id = "COOKINGFEVER";                               Name = "Cooking Fever" },
+        @{ Id = "CyberLinkMediaSuiteEssentials";              Name = "CyberLink Media Suite" },
+        @{ Id = "DisneyMagicKingdoms";                        Name = "Disney Magic Kingdoms" },
+        @{ Id = "Duolingo-LearnLanguagesforFree";              Name = "Duolingo" },
+        @{ Id = "Facebook";                                   Name = "Facebook" },
+        @{ Id = "FarmVille2CountryEscape";                    Name = "FarmVille 2" },
+        @{ Id = "Flipboard";                                  Name = "Flipboard" },
+        @{ Id = "HULULLC.HULUPLUS";                           Name = "Hulu" },
+        @{ Id = "Instagram";                                  Name = "Instagram" },
+        @{ Id = "king.com.BubbleWitch3Saga";                  Name = "Bubble Witch 3" },
+        @{ Id = "king.com.CandyCrushSaga";                    Name = "Candy Crush Saga" },
+        @{ Id = "king.com.CandyCrushSodaSaga";                Name = "Candy Crush Soda" },
+        @{ Id = "LinkedInforWindows";                         Name = "LinkedIn" },
+        @{ Id = "Netflix";                                    Name = "Netflix" },
+        @{ Id = "PandoraMediaInc";                            Name = "Pandora" },
+        @{ Id = "PicsArt-PhotoStudio";                        Name = "PicsArt" },
+        @{ Id = "TikTok";                                     Name = "TikTok" },
+        @{ Id = "TuneInRadio";                                Name = "TuneIn Radio" },
+        @{ Id = "Twitter";                                    Name = "Twitter / X" },
+        @{ Id = "Viber";                                      Name = "Viber" },
+        @{ Id = "WinZipUniversal";                            Name = "WinZip" },
+        @{ Id = "Spotify";                                    Name = "Spotify" }
     )
-    foreach ($c in $candidates) {
-        if (Test-Path $c) { return $c }
+
+    foreach ($app in $bloatApps) {
+        Remove-UWPApp -AppId $app.Id -FriendlyName $app.Name
     }
-
-    # Download portable 7-Zip extra (standalone 7za.exe) from 7-zip.org
-    Write-OK "7-Zip not found — downloading portable build..."
-    $sevenZipDir  = "$env:TEMP\7z"
-    $sevenZipExe  = "$sevenZipDir\7z.exe"
-    $sevenZipDll  = "$sevenZipDir\7z.dll"
-    New-Item -ItemType Directory -Path $sevenZipDir -Force | Out-Null
-
-    # 7-Zip 24.08 standalone console — official sourceforge mirror
-    $dlBase = "https://www.7-zip.org/a"
-    $exeUrl = "$dlBase/7zr.exe"   # 7zr is a standalone single-file build
-
-    Invoke-WebRequest -Uri $exeUrl -OutFile $sevenZipExe -UseBasicParsing -TimeoutSec 60
-    if (-not (Test-Path $sevenZipExe)) { throw "Failed to download 7-Zip portable." }
-    Write-OK "7-Zip portable ready: $sevenZipExe"
-    return $sevenZipExe
+    Write-OK "Bloatware app removal complete."
+} else {
+    Write-Skip "Bloatware removal skipped."
 }
 
-# ── Extract ISO and apply hardware bypass, then run setup.exe ─────────────────
-function Invoke-SilentUpgrade {
-    param([string]$IsoPath)
-
-    $extractPath = Get-Win11ExtractPath
-    $sevenZip    = $null
-    $extracted   = $false
-
-    # ── Step 1: Extract ISO using 7-Zip ──────────────────────────────────────
-    Write-OK "Extracting ISO to $extractPath ..."
-    try {
-        $sevenZip = Get-7ZipExe
-        if (Test-Path $extractPath) {
-            Remove-Item -Path $extractPath -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
-
-        $7zArgs  = "x `"$IsoPath`" -o`"$extractPath`" -y -bsp1"
-        $proc    = Start-Process -FilePath $sevenZip -ArgumentList $7zArgs `
-                       -PassThru -Wait -NoNewWindow -ErrorAction Stop
-
-        if ($proc.ExitCode -ne 0) { throw "7-Zip exited with code $($proc.ExitCode)." }
-
-        $setup = "$extractPath\setup.exe"
-        if (-not (Test-Path $setup)) { throw "setup.exe not found after extraction." }
-
-        Write-OK "ISO extracted successfully."
-        $extracted = $true
-    } catch {
-        Write-Host "    [!] 7-Zip extraction failed: $_ — falling back to Mount-DiskImage" `
-            -ForegroundColor Yellow
+# ── Optional: OEM bloat (HP / Dell / Lenovo) ─────────────────────────────────
+if (Confirm-Debloat "Remove OEM bloatware (HP, Dell, Lenovo preinstalled software)?") {
+    $oemApps = @(
+        @{ Id = "AD2F1837.HPAIExperienceCenter";              Name = "HP AI Experience Center" },
+        @{ Id = "AD2F1837.HPConnectedMusic";                  Name = "HP Connected Music" },
+        @{ Id = "AD2F1837.HPConnectedPhotopoweredbySnapfish"; Name = "HP Connected Photo" },
+        @{ Id = "AD2F1837.HPDesktopSupportUtilities";         Name = "HP Desktop Support" },
+        @{ Id = "AD2F1837.HPEasyClean";                       Name = "HP Easy Clean" },
+        @{ Id = "AD2F1837.HPJumpStarts";                      Name = "HP JumpStarts" },
+        @{ Id = "AD2F1837.HPPCHardwareDiagnosticsWindows";    Name = "HP PC Diagnostics" },
+        @{ Id = "AD2F1837.HPPowerManager";                    Name = "HP Power Manager" },
+        @{ Id = "AD2F1837.HPPrivacySettings";                 Name = "HP Privacy Settings" },
+        @{ Id = "AD2F1837.HPQuickDrop";                       Name = "HP QuickDrop" },
+        @{ Id = "AD2F1837.HPRegistration";                    Name = "HP Registration" },
+        @{ Id = "AD2F1837.HPSupportAssistant";                Name = "HP Support Assistant" },
+        @{ Id = "AD2F1837.HPSureShieldAI";                    Name = "HP Sure Shield AI" },
+        @{ Id = "AD2F1837.myHP";                              Name = "myHP" },
+        @{ Id = "E046963F.LenovoCompanion";                   Name = "Lenovo Vantage" },
+        @{ Id = "LenovoCompanyLimited.LenovoVantageService";  Name = "Lenovo Vantage Service" },
+        @{ Id = "DellInc.DellSupportAssistforPCs";            Name = "Dell SupportAssist" },
+        @{ Id = "DellInc.DellDigitalDelivery";                Name = "Dell Digital Delivery" },
+        @{ Id = "DellInc.DellMobileConnect";                  Name = "Dell Mobile Connect" }
+    )
+    foreach ($app in $oemApps) {
+        Remove-UWPApp -AppId $app.Id -FriendlyName $app.Name
     }
+    Write-OK "OEM bloatware removal complete."
+} else {
+    Write-Skip "OEM bloatware removal skipped."
+}
 
-    # ── Fallback: mount if extraction failed ─────────────────────────────────
-    if (-not $extracted) {
-        Write-OK "Mounting ISO as fallback..."
-        $mount       = Mount-DiskImage -ImagePath $IsoPath -PassThru -ErrorAction Stop
-        $driveLetter = ($mount | Get-Volume).DriveLetter
-        $extractPath = "${driveLetter}:"
-        $setup       = "$extractPath\setup.exe"
-        if (-not (Test-Path $setup)) {
-            Dismount-DiskImage -ImagePath $IsoPath -ErrorAction SilentlyContinue | Out-Null
-            throw "setup.exe not found in mounted ISO."
-        }
-        Write-OK "ISO mounted at $driveLetter`:"
+# ── Optional: Xbox / Game Bar ─────────────────────────────────────────────────
+if (Confirm-Debloat "Remove Xbox Game Bar and gaming overlay apps?") {
+    $xboxApps = @(
+        @{ Id = "Microsoft.GamingApp";             Name = "Xbox Gaming App" },
+        @{ Id = "Microsoft.XboxGameOverlay";        Name = "Xbox Game Overlay" },
+        @{ Id = "Microsoft.XboxGamingOverlay";      Name = "Xbox Gaming Overlay" },
+        @{ Id = "Microsoft.XboxApp";                Name = "Xbox Console Companion" }
+    )
+    foreach ($app in $xboxApps) {
+        Remove-UWPApp -AppId $app.Id -FriendlyName $app.Name
     }
+    # Disable Game DVR via registry
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR" "AppCaptureEnabled"       0
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR"        "AllowGameDVR"            0
+    Set-Reg "HKCU:\System\GameConfigStore"                              "GameDVR_Enabled"          0
+    Set-Reg "HKCU:\System\GameConfigStore"                              "GameDVR_FSEBehaviorMode"  2
+    Write-OK "Xbox Game Bar and DVR disabled."
+} else {
+    Write-Skip "Xbox / Game Bar removal skipped."
+}
 
-    # ── Step 2: Patch install.wim / install.esd (unpack WIM for inspection) ──
-    $wimPath = "$extractPath\sources\install.wim"
-    $esdPath = "$extractPath\sources\install.esd"
-    $imageFile = if (Test-Path $wimPath) { $wimPath } elseif (Test-Path $esdPath) { $esdPath } else { $null }
-
-    if ($imageFile) {
-        Write-OK "Found image file: $(Split-Path $imageFile -Leaf)"
-        try {
-            $indexes = & dism /Get-WimInfo /WimFile:"$imageFile" 2>&1 |
-                       Select-String "Index\s+:\s+(\d+)" | ForEach-Object {
-                           $_.Matches[0].Groups[1].Value
-                       }
-            Write-OK "Available editions in image: $($indexes -join ', ')"
-        } catch { Write-Skip "Could not enumerate WIM indexes: $_" }
+# ── Optional: OneDrive removal ────────────────────────────────────────────────
+if (Confirm-Debloat "Remove OneDrive and stop it from syncing?") {
+    # Uninstall OneDrive silently
+    $onedrivePath = "$env:SystemRoot\SysWOW64\OneDriveSetup.exe"
+    if (-not (Test-Path $onedrivePath)) {
+        $onedrivePath = "$env:SystemRoot\System32\OneDriveSetup.exe"
     }
-
-    # ── Step 3: Hardware requirement bypass ──────────────────────────────────
-    $appraiserSrc = "$extractPath\sources\appraiserres.dll"
-    if (Test-Path $appraiserSrc) {
-        try {
-            # Zero-byte appraiserres.dll disables TPM/SecureBoot/RAM checks
-            $nullDll = "$env:TEMP\appraiserres_null.dll"
-            [System.IO.File]::WriteAllBytes($nullDll, [byte[]]@())
-
-            # If extracted to disk, replace directly; if mounted, copy to TEMP
-            if ($extracted) {
-                Copy-Item -Path $nullDll -Destination $appraiserSrc -Force
-                Write-OK "appraiserres.dll patched in extracted files (hardware bypass active)."
-            } else {
-                # Can't write to mounted read-only ISO; pass via /appraiserresult flag instead
-                Write-OK "Hardware bypass via /appraiserresult flag (mounted ISO mode)."
-            }
-        } catch { Write-Skip "appraiserres bypass skipped: $_" }
-    }
-
-    # ── Step 4: Registry bypass keys (secondary TPM/SecureBoot bypass) ───────
-    Write-OK "Applying registry-level hardware requirement bypass..."
-    $moSetupPath = "HKLM:\SYSTEM\Setup\MoSetup"
-    if (-not (Test-Path $moSetupPath)) {
-        New-Item -Path $moSetupPath -Force | Out-Null
-    }
-    Set-ItemProperty -Path $moSetupPath -Name "AllowUpgradesWithUnsupportedTPMOrCPU" `
-        -Value 1 -Type DWord -Force
-    Write-OK "MoSetup\AllowUpgradesWithUnsupportedTPMOrCPU = 1"
-
-    $labConfigPath = "HKLM:\SYSTEM\Setup\LabConfig"
-    if (-not (Test-Path $labConfigPath)) {
-        New-Item -Path $labConfigPath -Force | Out-Null
-    }
-    @{
-        "BypassTPMCheck"          = 1
-        "BypassSecureBootCheck"   = 1
-        "BypassRAMCheck"          = 1
-        "BypassStorageCheck"      = 1
-        "BypassCPUCheck"          = 1
-    }.GetEnumerator() | ForEach-Object {
-        Set-ItemProperty -Path $labConfigPath -Name $_.Key -Value $_.Value -Type DWord -Force
-        Write-OK "LabConfig\$($_.Key) = 1"
-    }
-
-    # ── Step 5: Run setup.exe silently ────────────────────────────────────────
-    Write-OK "Launching setup.exe from extracted files..."
-    $setupArgs = "/auto upgrade /quiet /noreboot /skipeula /compat ignorewarning " +
-                 "/DynamicUpdate disable"
-
-    if (-not $extracted) {
-        # Mounted ISO — pass null appraiser via flag
-        $nullDll = "$env:TEMP\appraiserres_null.dll"
-        if (Test-Path $nullDll) {
-            $setupArgs += " /appraiserresult `"$nullDll`""
-        }
-    }
-
-    $proc = Start-Process -FilePath $setup -ArgumentList $setupArgs `
-                -PassThru -Wait -ErrorAction Stop
-
-    # ── Step 6: Cleanup ───────────────────────────────────────────────────────
-    if (-not $extracted -and $IsoPath) {
-        Dismount-DiskImage -ImagePath $IsoPath -ErrorAction SilentlyContinue | Out-Null
-        Write-OK "ISO dismounted."
-    }
-    # Keep extracted folder — setup.exe may still need it during the upgrade reboot phase
-
-    $successCodes = @(0, 3, 3010)
-    if ($proc.ExitCode -in $successCodes) {
-        Write-OK "setup.exe completed (exit $($proc.ExitCode)). Reboot to finish upgrade."
-        return $true
+    if (Test-Path $onedrivePath) {
+        Stop-Process -Name "OneDrive" -Force -ErrorAction SilentlyContinue
+        Start-Process $onedrivePath -ArgumentList "/uninstall" -Wait -ErrorAction SilentlyContinue
+        Write-OK "OneDrive uninstalled."
     } else {
-        # Log location for troubleshooting
-        $logPath = "$env:SystemDrive\`$WINDOWS.~BT\Sources\Panther"
-        Write-Host "    [!] setup.exe exited with code $($proc.ExitCode)." -ForegroundColor Yellow
-        if (Test-Path $logPath) {
-            Write-Host "        Logs: $logPath" -ForegroundColor DarkGray
-        }
-        throw "setup.exe failed with exit code $($proc.ExitCode)."
+        Write-Skip "OneDrive setup executable not found — may already be removed."
     }
-}
-
-
-# ── Pre-flight ────────────────────────────────────────────────────────────────
-Write-OK "Checking Windows 11 hardware requirements..."
-
-$tpm = Get-WmiObject -Namespace "root\cimv2\security\microsofttpm" `
-           -Class Win32_Tpm -ErrorAction SilentlyContinue
-$tpmReady   = $tpm -and $tpm.IsActivated_InitialValue -and $tpm.IsEnabled_InitialValue
-$cpu        = Get-CimInstance Win32_Processor | Select-Object -First 1
-$ramGB      = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
-$diskFreeGB = [math]::Round(
-    (Get-PSDrive -Name ($env:SystemDrive -replace ':') |
-     Select-Object -ExpandProperty Free) / 1GB, 1)
-
-Write-OK "CPU  : $($cpu.Name)"
-Write-OK "RAM  : $ramGB GB"
-Write-OK "Disk : $diskFreeGB GB free"
-Write-OK "TPM 2.0: $tpmReady"
-
-if (-not $tpmReady) {
-    Write-Host "    [!] TPM 2.0 inactive — hardware bypass will be applied automatically." `
-        -ForegroundColor Yellow
-}
-if ($diskFreeGB -lt 20) {
-    Write-Host "    [!] Only $diskFreeGB GB free. At least 20 GB required. Aborting." -ForegroundColor Red
-    Write-Skip "Upgrade cancelled — insufficient disk space."
+    # Remove OneDrive from File Explorer navigation pane
+    Set-Reg "HKCR:\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}"        "System.IsPinnedToNameSpaceTree" 0
+    Set-Reg "HKCR:\Wow6432Node\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}" "System.IsPinnedToNameSpaceTree" 0
+    Remove-UWPApp -AppId "Microsoft.OneDrive" -FriendlyName "OneDrive (UWP)"
+    Write-OK "OneDrive removed from File Explorer."
 } else {
-
-$upgradeSuccess = $false
-
-# ══════════════════════════════════════════════════════════════════════════════
-# METHOD 1 — FIDO (Microsoft CDN direct ISO, pbatard/Fido)
-# ══════════════════════════════════════════════════════════════════════════════
-if (-not $upgradeSuccess) {
-    Write-Host "`n    ┌─ Method 1: Fido (Microsoft CDN direct link)" -ForegroundColor Cyan
-    try {
-        $fidoUrl  = "https://raw.githubusercontent.com/pbatard/Fido/master/Fido.ps1"
-        Write-OK "Fetching Fido from $fidoUrl ..."
-        $fido = Invoke-RestMethod -Uri $fidoUrl -UseBasicParsing -TimeoutSec 30
-
-        if ($fido -match "<html" -or $fido.Length -lt 100) {
-            throw "Fido script fetch returned invalid content."
-        }
-
-        # Run Fido in -GetUrl mode to get the CDN link without opening a GUI
-        $isoUrl = & ([scriptblock]::Create($fido)) `
-                    -Win 11 -Rel Latest -Ed "Windows 11 Home/Pro/Edu" `
-                    -Lang "English International" -Arch x64 -GetUrl
-
-        if (-not $isoUrl -or $isoUrl -notmatch "^https://") {
-            throw "Fido returned an invalid or empty URL: $isoUrl"
-        }
-
-        Write-OK "ISO URL obtained: $($isoUrl.Substring(0,80))..."
-
-        $isoPath = Get-Win11IsoPath
-        Write-OK "Downloading ISO via BITS (resumes on interruption)..."
-        Start-BitsTransfer -Source $isoUrl -Destination $isoPath `
-            -DisplayName "Windows 11 ISO" -Priority High -ErrorAction Stop
-
-        if (Test-IsoValid $isoPath) {
-            Write-OK "ISO downloaded: $([math]::Round((Get-Item $isoPath).Length / 1GB, 2)) GB"
-            $upgradeSuccess = Invoke-SilentUpgrade -IsoPath $isoPath
-        } else {
-            throw "Downloaded file is missing or too small — likely a partial download."
-        }
-    } catch {
-        Write-Host "    └─ Method 1 failed: $_" -ForegroundColor Yellow
-    }
+    Write-Skip "OneDrive removal skipped."
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# METHOD 2 — WINDOWS 11 INSTALLATION ASSISTANT (no ISO, silent in-place)
+# B. SYSTEM TWEAKS
 # ══════════════════════════════════════════════════════════════════════════════
-if (-not $upgradeSuccess) {
-    Write-Host "`n    ┌─ Method 2: Windows 11 Installation Assistant" -ForegroundColor Cyan
-    try {
-        $assistantUrl  = "https://go.microsoft.com/fwlink/?linkid=2171764"
-        $assistantPath = "$env:TEMP\Win11InstallAssistant.exe"
+Write-Host "`n    ── B. System Tweaks ──" -ForegroundColor Yellow
 
-        Write-OK "Downloading Installation Assistant from Microsoft..."
-        Invoke-WebRequest -Uri $assistantUrl -OutFile $assistantPath `
-            -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+if (Confirm-Debloat "Apply system tweaks (fast startup, mouse acceleration, sticky keys, storage sense, etc.)?") {
 
-        if (-not (Test-Path $assistantPath) -or (Get-Item $assistantPath).Length -lt 1MB) {
-            throw "Installation Assistant download failed or file is too small."
-        }
+    # Disable Fast Startup (masks shutdown, prevents full POST on next boot)
+    Set-Reg "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" "HiberbootEnabled" 0
+    Write-OK "Fast Startup disabled."
 
-        Write-OK "Launching silent in-place upgrade..."
-        $proc = Start-Process -FilePath $assistantPath `
-                    -ArgumentList "/quietinstall /skipeula /auto upgrade /copylogs $env:TEMP\Win11AssistantLog" `
-                    -PassThru -Wait -ErrorAction Stop
+    # Disable BitLocker automatic device encryption (silently encrypts on fresh installs)
+    Set-Reg "HKLM:\SYSTEM\CurrentControlSet\Control\BitLocker" "PreventDeviceEncryption" 1
+    Write-OK "BitLocker auto-encryption disabled."
 
-        if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
-            Write-OK "Installation Assistant completed (exit $($proc.ExitCode)). Reboot to finish."
-            $upgradeSuccess = $true
-        } else {
-            throw "Installation Assistant exited with code $($proc.ExitCode)."
-        }
-    } catch {
-        Write-Host "    └─ Method 2 failed: $_" -ForegroundColor Yellow
-    }
-}
+    # Disable mouse acceleration (Enhance Pointer Precision)
+    Set-Reg "HKCU:\Control Panel\Mouse" "MouseSpeed"  "0" "String"
+    Set-Reg "HKCU:\Control Panel\Mouse" "MouseThreshold1" "0" "String"
+    Set-Reg "HKCU:\Control Panel\Mouse" "MouseThreshold2" "0" "String"
+    Write-OK "Mouse acceleration (Enhance Pointer Precision) disabled."
 
-# ══════════════════════════════════════════════════════════════════════════════
-# METHOD 3 — MEDIA CREATION TOOL (silent ISO creation + setup)
-# ══════════════════════════════════════════════════════════════════════════════
-if (-not $upgradeSuccess) {
-    Write-Host "`n    ┌─ Method 3: Media Creation Tool" -ForegroundColor Cyan
-    try {
-        $mctUrl  = "https://go.microsoft.com/fwlink/?LinkId=2265055"
-        $mctPath = "$env:TEMP\MediaCreationTool.exe"
-        $isoPath = Get-Win11IsoPath
+    # Disable Sticky Keys shortcut (Shift x5 popup)
+    Set-Reg "HKCU:\Control Panel\Accessibility\StickyKeys" "Flags" "506" "String"
+    Write-OK "Sticky Keys shortcut disabled."
 
-        Write-OK "Downloading Media Creation Tool from Microsoft..."
-        Invoke-WebRequest -Uri $mctUrl -OutFile $mctPath `
-            -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+    # Disable Storage Sense automatic disk cleanup
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\StorageSense" "AllowStorageSenseGlobal" 0
+    Write-OK "Storage Sense disabled."
 
-        if (-not (Test-Path $mctPath) -or (Get-Item $mctPath).Length -lt 1MB) {
-            throw "MCT download failed or file is too small."
-        }
+    # Disable network connectivity during Modern Standby (reduces battery drain)
+    Set-Reg "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\F15576FC-98A3-4FA3-8F3D-3C2DBBCA5BC5" `
+        "Attributes" 2
+    Write-OK "Modern Standby network connectivity disabled."
 
-        Write-OK "Running MCT to create ISO silently..."
-        $mctArgs = "/Eula accept /Retail /MediaArch x64 /MediaLangCode en-US " +
-                   "/MediaEdition Home /MediaType ISO /MediaLocation $isoPath"
-        $proc = Start-Process -FilePath $mctPath -ArgumentList $mctArgs `
-                    -PassThru -Wait -ErrorAction Stop
+    # Disable Snap Assist suggestions
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "SnapAssist"       0
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "EnableSnapBar"    0
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "DITest"           0
+    Write-OK "Snap Assist suggestions disabled."
 
-        if ($proc.ExitCode -ne 0) {
-            throw "MCT exited with code $($proc.ExitCode)."
-        }
+    # Disable Drag Tray (file share tray)
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "EnableSharingWizard" 0
+    Write-OK "Drag Tray (sharing wizard) disabled."
 
-        if (Test-IsoValid $isoPath) {
-            Write-OK "ISO created: $([math]::Round((Get-Item $isoPath).Length / 1GB, 2)) GB"
-            $upgradeSuccess = Invoke-SilentUpgrade -IsoPath $isoPath
-        } else {
-            throw "MCT did not produce a valid ISO at $isoPath."
-        }
-    } catch {
-        Write-Host "    └─ Method 3 failed: $_" -ForegroundColor Yellow
-    }
-}
-
-# ══════════════════════════════════════════════════════════════════════════════
-# METHOD 4 — UUP DUMP (ISO assembled from Microsoft Update servers)
-# ══════════════════════════════════════════════════════════════════════════════
-if (-not $upgradeSuccess) {
-    Write-Host "`n    ┌─ Method 4: UUP Dump (Microsoft Update servers)" -ForegroundColor Cyan
-    try {
-        # Query UUP dump API for the latest Windows 11 x64 retail build
-        $apiUrl  = "https://api.uupdump.net/listid.php?search=Windows+11&sortByDate=1"
-        Write-OK "Querying UUP Dump API for latest Windows 11 build..."
-        $builds  = Invoke-RestMethod -Uri $apiUrl -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
-
-        # Pick the latest amd64 retail build
-        $latest = $builds.response.builds.build | Where-Object {
-            $_.arch -eq "amd64" -and $_.build -match "^\d{5}"
-        } | Sort-Object build -Descending | Select-Object -First 1
-
-        if (-not $latest) { throw "No suitable build found in UUP Dump API response." }
-
-        $buildId = $latest.uuid
-        Write-OK "Latest build: $($latest.title) ($($latest.build)) — UUID: $buildId"
-
-        # Download the UUP dump package scripts
-        $pkgUrl  = "https://uupdump.net/get.php?id=$buildId&pack=en-us&edition=professional&autodl=2"
-        $pkgZip  = "$env:TEMP\uupdump_pkg.zip"
-        $pkgDir  = "$env:TEMP\uupdump_pkg"
-
-        Write-OK "Downloading UUP Dump conversion package..."
-        Invoke-WebRequest -Uri $pkgUrl -OutFile $pkgZip `
-            -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
-
-        if (-not (Test-Path $pkgZip) -or (Get-Item $pkgZip).Length -lt 10KB) {
-            throw "UUP Dump package download failed."
-        }
-
-        Expand-Archive -Path $pkgZip -DestinationPath $pkgDir -Force
-
-        # Run the conversion script (uup_download_windows.cmd)
-        $convScript = Get-ChildItem -Path $pkgDir -Filter "uup_download_windows.cmd" -Recurse |
-                      Select-Object -First 1
-
-        if (-not $convScript) { throw "Conversion script not found in UUP Dump package." }
-
-        Write-OK "Building ISO from Microsoft Update servers — this will take 20-40 min..."
-        $proc = Start-Process -FilePath "cmd.exe" `
-                    -ArgumentList "/c `"$($convScript.FullName)`"" `
-                    -WorkingDirectory $convScript.DirectoryName `
-                    -PassThru -Wait -ErrorAction Stop
-
-        # Find the resulting ISO in the package directory
-        $builtIso = Get-ChildItem -Path $pkgDir -Filter "*.iso" -Recurse |
-                    Sort-Object Length -Descending | Select-Object -First 1
-
-        if ($builtIso -and (Test-IsoValid $builtIso.FullName)) {
-            $isoPath = Get-Win11IsoPath
-            Move-Item -Path $builtIso.FullName -Destination $isoPath -Force
-            Write-OK "ISO built: $([math]::Round((Get-Item $isoPath).Length / 1GB, 2)) GB"
-            $upgradeSuccess = Invoke-SilentUpgrade -IsoPath $isoPath
-        } else {
-            throw "UUP Dump did not produce a valid ISO. Check $pkgDir for logs."
-        }
-    } catch {
-        Write-Host "    └─ Method 4 failed: $_" -ForegroundColor Yellow
-    }
-}
-
-# ── Final result ──────────────────────────────────────────────────────────────
-if ($upgradeSuccess) {
-    Write-Host "`n    [+] Windows 11 upgrade staged successfully." -ForegroundColor Green
-    Write-Host "        Reboot when ready to complete the upgrade." -ForegroundColor Green
 } else {
-    Write-Host "`n    [!] All 4 methods failed. Manual steps:" -ForegroundColor Red
-    Write-Host "        1. Visit https://www.microsoft.com/software-download/windows11" -ForegroundColor DarkGray
-    Write-Host "        2. Download the ISO manually" -ForegroundColor DarkGray
-    Write-Host "        3. Mount it and run: setup.exe /auto upgrade /quiet" -ForegroundColor DarkGray
+    Write-Skip "System tweaks skipped."
 }
 
-} # end disk check
-} # end upgrade prompt
+# ══════════════════════════════════════════════════════════════════════════════
+# C. WINDOWS UPDATE TWEAKS
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Host "`n    ── C. Windows Update Tweaks ──" -ForegroundColor Yellow
+
+if (Confirm-Debloat "Prevent Windows from force-installing updates immediately and auto-rebooting?") {
+    # Stop updates from being pushed ASAP (Active Hours + deferral)
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "NoAutoUpdate"          0
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "AUOptions"             2
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "ScheduledInstallDay"   0
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "ScheduledInstallTime"  3
+    # Prevent automatic restart while user is signed in
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "NoAutoRebootWithLoggedOnUsers" 1
+    # Set active hours (0600–2300) to prevent reboots during the day
+    Set-Reg "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" "ActiveHoursStart" 6
+    Set-Reg "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" "ActiveHoursEnd"   23
+    Write-OK "Windows Update auto-reboot and immediate push prevented."
+} else {
+    Write-Skip "Windows Update tweaks skipped."
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# D. APPEARANCE
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Host "`n    ── D. Appearance ──" -ForegroundColor Yellow
+
+if (Confirm-Debloat "Enable dark mode for system and apps?") {
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" "AppsUseLightTheme"   0
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" "SystemUsesLightTheme" 0
+    Write-OK "Dark mode enabled."
+} else {
+    Write-Skip "Dark mode skipped."
+}
+
+if (Confirm-Debloat "Disable transparency effects and animations (improves performance)?") {
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" "EnableTransparency" 0
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\DWM" "EnableAeroPeek" 0
+    # Visual effects — best performance
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" "VisualFXSetting" 3
+    Set-Reg "HKCU:\Control Panel\Desktop" "UserPreferencesMask" ([byte[]](0x90,0x12,0x03,0x80,0x10,0x00,0x00,0x00)) "Binary"
+    Write-OK "Transparency and animations disabled."
+} else {
+    Write-Skip "Appearance tweaks skipped."
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# E. START MENU & SEARCH
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Host "`n    ── E. Start Menu & Search ──" -ForegroundColor Yellow
+
+if (Confirm-Debloat "Clean up Start menu (disable suggestions, search highlights, local search history)?") {
+
+    # Disable Start menu suggestions / app promotions
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338388Enabled" 0
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338389Enabled" 0
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-353698Enabled" 0
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SystemPaneSuggestionsEnabled"    0
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SoftLandingEnabled"              0
+    Write-OK "Start menu app suggestions disabled."
+
+    # Disable Search Highlights (dynamic/branded content in taskbar search)
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDynamicSearchBoxEnabled" 0
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "EnableDynamicContentInWSB" 0
+    Write-OK "Search Highlights (taskbar dynamic content) disabled."
+
+    # Disable local Windows search history
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDeviceSearchHistoryEnabled" 0
+    Write-OK "Local search history disabled."
+
+    # Disable Microsoft Store app suggestions in search
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCloudSearch" 0
+    Write-OK "Store app suggestions in search disabled."
+
+    # Disable Phone Link from Start menu
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\People" "PeopleBand" 0
+    Write-OK "Phone Link / People bar removed from taskbar."
+
+} else {
+    Write-Skip "Start menu tweaks skipped."
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# F. TASKBAR
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Host "`n    ── F. Taskbar ──" -ForegroundColor Yellow
+
+if (Confirm-Debloat "Clean up taskbar (hide search box, task view, chat / Meet Now button)?") {
+
+    # Hide task view button
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowTaskViewButton" 0
+    Write-OK "Task View button hidden."
+
+    # Hide search box (icon only) — set to 1 for icon, 0 to hide completely
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search" "SearchboxTaskbarMode" 0
+    Write-OK "Search box hidden from taskbar."
+
+    # Hide Chat / Meet Now button (Windows 10 22H2+)
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "TaskbarMn" 0
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Chat"             "ChatIcon"  3
+    Write-OK "Chat / Meet Now button hidden."
+
+    # Hide News and Interests / Widgets
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Feeds" "ShellFeedsTaskbarViewMode" 2
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds" "EnableFeeds" 0
+    Write-OK "News & Interests / Widgets hidden from taskbar."
+
+    # Enable End Task option in taskbar right-click
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" "TaskbarEndTask" 1
+    Write-OK "End Task enabled in taskbar right-click."
+
+} else {
+    Write-Skip "Taskbar tweaks skipped."
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# G. FILE EXPLORER
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Host "`n    ── G. File Explorer ──" -ForegroundColor Yellow
+
+if (Confirm-Debloat "Improve File Explorer (show file extensions, hidden files, hide 3D Objects)?") {
+
+    # Show file extensions for known file types
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "HideFileExt"           0
+    Write-OK "File extensions shown for known file types."
+
+    # Show hidden files, folders and drives
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "Hidden"                1
+    Write-OK "Hidden files and folders shown."
+
+    # Hide 3D Objects from File Explorer navigation pane (Windows 10)
+    $path3D = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\{0DB7E03F-FC29-4DC6-9020-FF41B59E513A}"
+    if (Test-Path $path3D) {
+        Remove-Item -Path $path3D -Recurse -Force -ErrorAction SilentlyContinue
+        Write-OK "3D Objects folder removed from This PC."
+    }
+
+    # Hide duplicate removable drives from navigation pane
+    Set-Reg "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\DelegateFolders\{F5FB2C77-0E2F-4A16-A381-3E560C68BC83}" "(Default)" "" "String"
+    Write-OK "Duplicate removable drive entries hidden."
+
+    # Set File Explorer to open 'This PC' by default
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "LaunchTo" 1
+    Write-OK "File Explorer opens to This PC by default."
+
+    # Hide 'Include in library', 'Give access to', 'Share' from context menu
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" "MultipleInvokePromptMinimum" 2
+    Remove-Item -Path "HKCR:\*\shellex\ContextMenuHandlers\Library Location"      -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKLM:\SOFTWARE\Classes\Folder\ShellEx\ContextMenuHandlers\Library Location" -ErrorAction SilentlyContinue
+    Write-OK "Cluttered context menu items hidden."
+
+} else {
+    Write-Skip "File Explorer tweaks skipped."
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# H. LOCK SCREEN & SPOTLIGHT
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Host "`n    ── H. Lock Screen & Spotlight ──" -ForegroundColor Yellow
+
+if (Confirm-Debloat "Disable lock screen tips, Windows Spotlight ads, and rotating background?") {
+
+    # Disable lock screen tips / fun facts
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "RotatingLockScreenOverlayEnabled" 0
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338387Enabled"  0
+    Write-OK "Lock screen tips and fun facts disabled."
+
+    # Disable Windows Spotlight on lock screen
+    Set-Reg "HKCU:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableWindowsSpotlightFeatures"       1
+    Set-Reg "HKCU:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableWindowsSpotlightOnActionCenter"  1
+    Set-Reg "HKCU:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableWindowsSpotlightOnSettings"      1
+    Set-Reg "HKCU:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableTailoredExperiencesWithDiagnosticData" 1
+    Write-OK "Windows Spotlight disabled."
+
+    # Disable desktop Spotlight background option
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "RotatingLockScreenEnabled" 0
+    Write-OK "Spotlight rotating desktop background disabled."
+
+} else {
+    Write-Skip "Lock screen / Spotlight tweaks skipped."
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# I. EDGE ADS & OPTIONAL BROWSER BLOAT
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Host "`n    ── I. Browser Bloat ──" -ForegroundColor Yellow
+
+if (Confirm-Debloat "Disable Microsoft Edge ads, news feed (MSN), and shopping suggestions?") {
+
+    $edgePolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
+    if (-not (Test-Path $edgePolicyPath)) { New-Item -Path $edgePolicyPath -Force | Out-Null }
+
+    Set-Reg $edgePolicyPath "NewTabPageContentEnabled"              0
+    Set-Reg $edgePolicyPath "NewTabPageBingChatEnabled"             0
+    Set-Reg $edgePolicyPath "HubsSidebarEnabled"                    0
+    Set-Reg $edgePolicyPath "PersonalizationReportingEnabled"        0
+    Set-Reg $edgePolicyPath "ShowRecommendationsEnabled"            0
+    Set-Reg $edgePolicyPath "ShoppingAssistantEnabled"              0
+    Set-Reg $edgePolicyPath "EdgeShoppingAssistantEnabled"          0
+    Set-Reg $edgePolicyPath "WebWidgetAllowed"                      0
+    Set-Reg $edgePolicyPath "StartupBoostEnabled"                   0
+    Set-Reg $edgePolicyPath "BackgroundModeEnabled"                 0
+
+    # Disable MSN news feed / Edge new tab page promoted content
+    Set-Reg "HKCU:\SOFTWARE\Microsoft\Edge\SmartScreenEnabled" "(Default)" 0 "DWord"
+    Write-OK "Edge ads, news feed, shopping assistant, and startup boost disabled."
+
+} else {
+    Write-Skip "Edge bloat tweaks skipped."
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# J. FIND MY DEVICE & LOCATION HISTORY
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Host "`n    ── J. Find My Device & Location History ──" -ForegroundColor Yellow
+
+if (Confirm-Debloat "Disable Find My Device location tracking and location history?") {
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\FindMyDevice" "AllowFindMyDevice" 0
+    Set-Reg "HKLM:\SOFTWARE\Microsoft\Settings\FindMyDevice"  "LocationSyncEnabled" 0
+    # Clear stored location history
+    Remove-Item -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location\NonPackaged" `
+        -Recurse -Force -ErrorAction SilentlyContinue
+    Write-OK "Find My Device and location history disabled."
+} else {
+    Write-Skip "Find My Device skipped."
+}
+
+# ── Restart Explorer to apply visual changes ──────────────────────────────────
+Write-Host "`n    [*] Restarting Explorer to apply taskbar and visual changes..." -ForegroundColor Cyan
+Stop-Process -Name "explorer" -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+Start-Process "explorer.exe"
+Write-OK "Explorer restarted."
 
 # ─────────────────────────────────────────────────────────────────────────────
 Write-Host "`n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host " Privacy hardening complete. Reboot recommended." -ForegroundColor Green
+Write-Host " Privacy hardening + debloat complete. Reboot recommended." -ForegroundColor Green
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`n" -ForegroundColor Cyan

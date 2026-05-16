@@ -350,101 +350,180 @@ foreach ($bin in $blockBinaries) {
     }
 }
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# 15. DOWNLOAD LATEST STABLE CUMULATIVE UPDATE (no sign-in, WUA COM API)
+# 15. UPDATE & UPGRADE WINDOWS
+#     Choose exactly what to apply — each option is independent.
 # ─────────────────────────────────────────────────────────────────────────────
-Write-Header "Fetching Latest Stable Cumulative Update via Windows Update Agent"
+Write-Header "Update & Upgrade Windows"
 
-try {
-    # ── Create a silent, unauthenticated WUA session ──────────────────────────
-    $UpdateSession  = New-Object -ComObject Microsoft.Update.Session
-    $UpdateSession.ClientApplicationID = "Privacy-Harden-Script"
+Write-Host @"
 
-    $UpdateSearcher = $UpdateSession.CreateUpdateSearcher()
+    Choose what you want to apply for Windows Update.
+    Each option is independent — select all or just what you need.
 
-    # Scope: not installed, not hidden, software category only
-    # "Cumulative Update for Windows 10" is always a Software type update
-    Write-OK "Querying Windows Update service (no credentials required)..."
-    $SearchResult = $UpdateSearcher.Search(
-        "IsInstalled=0 and Type='Software' and IsHidden=0 and BrowseOnly=0"
-    )
+    [1]  Fetch & install latest stable Cumulative Update (KB) — no sign-in
+    [2]  Prevent updates from installing as soon as they are available
+    [3]  Prevent automatic restart after updates while signed in
+    [4]  Disable Delivery Optimization (stop sharing your bandwidth for updates)
+    [A]  Apply all of the above
+    [S]  Skip — leave Windows Update settings unchanged
 
-    if ($SearchResult.Updates.Count -eq 0) {
-        Write-Skip "No pending updates found — system may already be fully patched."
-    } else {
-        # ── Filter to the latest Cumulative Update KB only ────────────────────
-        $CumulativeUpdates = $SearchResult.Updates | Where-Object {
-            $_.Title -match "Cumulative Update for Windows 10"
-        } | Sort-Object -Property LastDeploymentChangeTime -Descending
+"@ -ForegroundColor DarkCyan
 
-        if (-not $CumulativeUpdates) {
-            Write-Skip "No cumulative update found in pending list."
+$updateChoice = (Read-Host "    Your choice").Trim().ToUpper()
+$doKB   = $updateChoice -in @('1','A')
+$doASAP = $updateChoice -in @('2','A')
+$doAR   = $updateChoice -in @('3','A')
+$doDO   = $updateChoice -in @('4','A')
+
+# ── Option 1: Fetch & install latest KB via WUA COM API ──────────────────────
+if ($doKB) {
+    Write-Host "`n    [*] Fetching latest stable Cumulative Update..." -ForegroundColor Cyan
+    try {
+        $UpdateSession  = New-Object -ComObject Microsoft.Update.Session
+        $UpdateSession.ClientApplicationID = "10surf-Microsurf"
+        $UpdateSearcher = $UpdateSession.CreateUpdateSearcher()
+
+        Write-OK "Querying Windows Update service (no credentials required)..."
+        $SearchResult = $UpdateSearcher.Search(
+            "IsInstalled=0 and Type='Software' and IsHidden=0 and BrowseOnly=0"
+        )
+
+        if ($SearchResult.Updates.Count -eq 0) {
+            Write-Skip "No pending updates found — system may already be fully patched."
         } else {
-            $TargetUpdate = $CumulativeUpdates | Select-Object -First 1
+            $CumulativeUpdates = $SearchResult.Updates | Where-Object {
+                $_.Title -match "Cumulative Update for Windows 10"
+            } | Sort-Object -Property LastDeploymentChangeTime -Descending
 
-            # Extract KB number from title
-            $KB = if ($TargetUpdate.Title -match "(KB\d+)") { $Matches[1] } else { "Unknown KB" }
+            if (-not $CumulativeUpdates) {
+                Write-Skip "No cumulative update found in pending list."
+            } else {
+                $TargetUpdate = $CumulativeUpdates | Select-Object -First 1
+                $KB = if ($TargetUpdate.Title -match "(KB\d+)") { $Matches[1] } else { "Unknown KB" }
 
-            Write-OK "Found: $($TargetUpdate.Title)"
-            Write-OK "KB: $KB  |  Size: $([math]::Round($TargetUpdate.MaxDownloadSize / 1MB, 1)) MB"
-            Write-OK "Released: $($TargetUpdate.LastDeploymentChangeTime)"
+                Write-OK "Found  : $($TargetUpdate.Title)"
+                Write-OK "KB     : $KB"
+                Write-OK "Size   : $([math]::Round($TargetUpdate.MaxDownloadSize / 1MB, 1)) MB"
+                Write-OK "Released: $($TargetUpdate.LastDeploymentChangeTime)"
 
-            # ── Build a collection with just this update ──────────────────────
-            $UpdatesToDownload = New-Object -ComObject Microsoft.Update.UpdateColl
-            $UpdatesToDownload.Add($TargetUpdate) | Out-Null
+                $UpdatesToDownload          = New-Object -ComObject Microsoft.Update.UpdateColl
+                $UpdatesToDownload.Add($TargetUpdate) | Out-Null
+                $Downloader                 = $UpdateSession.CreateUpdateDownloader()
+                $Downloader.Updates         = $UpdatesToDownload
+                $Downloader.Priority        = 3
 
-            # ── Download silently (no UI, no sign-in prompt) ──────────────────
-            $Downloader          = $UpdateSession.CreateUpdateDownloader()
-            $Downloader.Updates  = $UpdatesToDownload
-            $Downloader.Priority = 3   # 1=Low 2=Normal 3=High 4=ExtraHigh
+                Write-OK "Downloading $KB — this may take several minutes..."
+                $DownloadResult = $Downloader.Download()
 
-            Write-OK "Downloading $KB — this may take several minutes..."
+                switch ($DownloadResult.ResultCode) {
+                    2 { Write-OK "$KB downloaded successfully and is staged for install." }
+                    3 { Write-OK "$KB download succeeded with warnings." }
+                    4 { Write-Host "    [!] $KB download failed." -ForegroundColor Yellow }
+                    5 { Write-Host "    [!] $KB download aborted." -ForegroundColor Yellow }
+                    default { Write-OK "Download result code: $($DownloadResult.ResultCode)" }
+                }
 
-            $DownloadResult = $Downloader.Download()
+                if ($DownloadResult.ResultCode -eq 2) {
+                    Write-Host ""
+                    $installNow = Read-Host "    Install $KB now and reboot? [Y/N]"
+                    if ($installNow -match "^[Yy]") {
+                        $UpdatesToInstall          = New-Object -ComObject Microsoft.Update.UpdateColl
+                        $UpdatesToInstall.Add($TargetUpdate) | Out-Null
+                        $Installer                 = $UpdateSession.CreateUpdateInstaller()
+                        $Installer.Updates         = $UpdatesToInstall
 
-            switch ($DownloadResult.ResultCode) {
-                2 { Write-OK "$KB downloaded successfully and is staged for install." }
-                3 { Write-OK "$KB download succeeded with warnings." }
-                4 { Write-Host "    [!] $KB download failed." -ForegroundColor Yellow }
-                5 { Write-Host "    [!] $KB download aborted." -ForegroundColor Yellow }
-                default { Write-OK "Download result code: $($DownloadResult.ResultCode)" }
-            }
+                        Write-OK "Installing $KB..."
+                        $InstallResult = $Installer.Install()
 
-            # ── Prompt to install (or pass -AutoInstall switch to skip) ───────
-            if ($DownloadResult.ResultCode -eq 2) {
-                $choice = Read-Host "`n    Install $KB now and reboot? [Y/N]"
-                if ($choice -match "^[Yy]") {
-                    $UpdatesToInstall = New-Object -ComObject Microsoft.Update.UpdateColl
-                    $UpdatesToInstall.Add($TargetUpdate) | Out-Null
-
-                    $Installer         = $UpdateSession.CreateUpdateInstaller()
-                    $Installer.Updates = $UpdatesToInstall
-
-                    Write-OK "Installing $KB..."
-                    $InstallResult = $Installer.Install()
-
-                    switch ($InstallResult.ResultCode) {
-                        2 {
-                            Write-OK "$KB installed successfully."
-                            if ($InstallResult.RebootRequired) {
-                                Write-Host "`n    [!] Reboot required to complete installation." -ForegroundColor Yellow
+                        switch ($InstallResult.ResultCode) {
+                            2 {
+                                Write-OK "$KB installed successfully."
+                                if ($InstallResult.RebootRequired) {
+                                    Write-Host "    [!] Reboot required to complete installation." -ForegroundColor Yellow
+                                }
                             }
+                            3 { Write-OK "$KB installed with warnings." }
+                            4 { Write-Host "    [!] Installation failed." -ForegroundColor Red }
+                            default { Write-OK "Install result code: $($InstallResult.ResultCode)" }
                         }
-                        3 { Write-OK "$KB installed with warnings." }
-                        4 { Write-Host "    [!] Installation failed." -ForegroundColor Red }
-                        default { Write-OK "Install result code: $($InstallResult.ResultCode)" }
+                    } else {
+                        Write-OK "$KB is staged. Run Windows Update to install when ready."
                     }
-                } else {
-                    Write-OK "$KB is staged. Run Windows Update to install when ready."
                 }
             }
         }
+    } catch {
+        Write-Host "    [!] WUA COM error: $_" -ForegroundColor Red
+        Write-Host "        Ensure wuauserv is running: Start-Service wuauserv" -ForegroundColor DarkGray
     }
-} catch {
-    Write-Host "    [!] WUA COM error: $_" -ForegroundColor Red
-    Write-Host "        Ensure the Windows Update service (wuauserv) is running." -ForegroundColor DarkGray
+} else {
+    if ($updateChoice -ne 'S') { Write-Skip "KB fetch skipped." }
 }
 
+# ── Option 2: Prevent updates from installing ASAP ───────────────────────────
+if ($doASAP) {
+    Write-Host "`n    [*] Configuring update deferral..." -ForegroundColor Cyan
+
+    # Defer feature updates by 365 days, quality updates by 30 days
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" "DeferFeatureUpdates"         1
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" "DeferFeatureUpdatesPeriodInDays" 365
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" "DeferQualityUpdates"         1
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" "DeferQualityUpdatesPeriodInDays" 30
+
+    # Tell Windows Update not to download immediately upon availability
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "NoAutoUpdate"    0
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "AUOptions"       2
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "ScheduledInstallDay"  0
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "ScheduledInstallTime" 3
+
+    # Set active hours to reduce surprise update windows (06:00–23:00)
+    Set-Reg "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" "ActiveHoursStart" 6
+    Set-Reg "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" "ActiveHoursEnd"   23
+
+    Write-OK "Feature updates deferred 365 days, quality updates deferred 30 days."
+    Write-OK "Active hours set to 06:00–23:00."
+} else {
+    if ($updateChoice -ne 'S') { Write-Skip "Update deferral skipped." }
+}
+
+# ── Option 3: Prevent automatic restart after updates while signed in ─────────
+if ($doAR) {
+    Write-Host "`n    [*] Disabling forced auto-restart after updates..." -ForegroundColor Cyan
+
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "NoAutoRebootWithLoggedOnUsers" 1
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"    "SetAutoRestartNotificationConfig" 1
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"    "AutoRestartNotificationSchedule"  4
+    Set-Reg "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings"         "IsExpedited" 0
+
+    Write-OK "Automatic restart after updates suppressed while a user is signed in."
+} else {
+    if ($updateChoice -ne 'S') { Write-Skip "Auto-restart suppression skipped." }
+}
+
+# ── Option 4: Disable Delivery Optimization (P2P update sharing) ─────────────
+if ($doDO) {
+    Write-Host "`n    [*] Disabling Delivery Optimization..." -ForegroundColor Cyan
+
+    # DODownloadMode: 0 = HTTP only, no P2P (LAN or internet)
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization"                           "DODownloadMode" 0
+    Set-Reg "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Config"              "DODownloadMode" 0
+
+    # Also disable upload limits entirely
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" "DOMaxUploadBandwidth"  0
+    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" "DOUploadPolicy"        0
+
+    Disable-Svc "DoSvc"
+
+    Write-OK "Delivery Optimization set to HTTP-only — your bandwidth is yours."
+} else {
+    if ($updateChoice -ne 'S') { Write-Skip "Delivery Optimization unchanged." }
+}
+
+if ($updateChoice -eq 'S') {
+    Write-Skip "All Windows Update options skipped."
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 16. DEBLOAT — BLOATWARE REMOVAL & SYSTEM OPTIMISATION
@@ -701,32 +780,9 @@ if (Confirm-Debloat "Apply system tweaks (fast startup, mouse acceleration, stic
 } else {
     Write-Skip "System tweaks skipped."
 }
-
-# ══════════════════════════════════════════════════════════════════════════════
-# C. WINDOWS UPDATE TWEAKS
-# ══════════════════════════════════════════════════════════════════════════════
-Write-Host "`n    ── C. Windows Update Tweaks ──" -ForegroundColor Yellow
-
-if (Confirm-Debloat "Prevent Windows from force-installing updates immediately and auto-rebooting?") {
-    # Stop updates from being pushed ASAP (Active Hours + deferral)
-    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "NoAutoUpdate"          0
-    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "AUOptions"             2
-    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "ScheduledInstallDay"   0
-    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "ScheduledInstallTime"  3
-    # Prevent automatic restart while user is signed in
-    Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "NoAutoRebootWithLoggedOnUsers" 1
-    # Set active hours (0600–2300) to prevent reboots during the day
-    Set-Reg "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" "ActiveHoursStart" 6
-    Set-Reg "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" "ActiveHoursEnd"   23
-    Write-OK "Windows Update auto-reboot and immediate push prevented."
-} else {
-    Write-Skip "Windows Update tweaks skipped."
-}
-
-# ══════════════════════════════════════════════════════════════════════════════
 # D. APPEARANCE
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Host "`n    ── D. Appearance ──" -ForegroundColor Yellow
+Write-Host "`n    ── C. Appearance ──" -ForegroundColor Yellow
 
 if (Confirm-Debloat "Enable dark mode for system and apps?") {
     Set-Reg "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" "AppsUseLightTheme"   0
@@ -750,7 +806,7 @@ if (Confirm-Debloat "Disable transparency effects and animations (improves perfo
 # ══════════════════════════════════════════════════════════════════════════════
 # E. START MENU & SEARCH
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Host "`n    ── E. Start Menu & Search ──" -ForegroundColor Yellow
+Write-Host "`n    ── D. Start Menu & Search ──" -ForegroundColor Yellow
 
 if (Confirm-Debloat "Clean up Start menu (disable suggestions, search highlights, local search history)?") {
 
@@ -786,7 +842,7 @@ if (Confirm-Debloat "Clean up Start menu (disable suggestions, search highlights
 # ══════════════════════════════════════════════════════════════════════════════
 # F. TASKBAR
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Host "`n    ── F. Taskbar ──" -ForegroundColor Yellow
+Write-Host "`n    ── E. Taskbar ──" -ForegroundColor Yellow
 
 if (Confirm-Debloat "Clean up taskbar (hide search box, task view, chat / Meet Now button)?") {
 
@@ -819,7 +875,7 @@ if (Confirm-Debloat "Clean up taskbar (hide search box, task view, chat / Meet N
 # ══════════════════════════════════════════════════════════════════════════════
 # G. FILE EXPLORER
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Host "`n    ── G. File Explorer ──" -ForegroundColor Yellow
+Write-Host "`n    ── F. File Explorer ──" -ForegroundColor Yellow
 
 if (Confirm-Debloat "Improve File Explorer (show file extensions, hidden files, hide 3D Objects)?") {
 
@@ -859,7 +915,7 @@ if (Confirm-Debloat "Improve File Explorer (show file extensions, hidden files, 
 # ══════════════════════════════════════════════════════════════════════════════
 # H. LOCK SCREEN & SPOTLIGHT
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Host "`n    ── H. Lock Screen & Spotlight ──" -ForegroundColor Yellow
+Write-Host "`n    ── G. Lock Screen & Spotlight ──" -ForegroundColor Yellow
 
 if (Confirm-Debloat "Disable lock screen tips, Windows Spotlight ads, and rotating background?") {
 
@@ -886,7 +942,7 @@ if (Confirm-Debloat "Disable lock screen tips, Windows Spotlight ads, and rotati
 # ══════════════════════════════════════════════════════════════════════════════
 # I. EDGE ADS & OPTIONAL BROWSER BLOAT
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Host "`n    ── I. Browser Bloat ──" -ForegroundColor Yellow
+Write-Host "`n    ── H. Browser Bloat ──" -ForegroundColor Yellow
 
 if (Confirm-Debloat "Disable Microsoft Edge ads, news feed (MSN), and shopping suggestions?") {
 
@@ -915,7 +971,7 @@ if (Confirm-Debloat "Disable Microsoft Edge ads, news feed (MSN), and shopping s
 # ══════════════════════════════════════════════════════════════════════════════
 # J. FIND MY DEVICE & LOCATION HISTORY
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Host "`n    ── J. Find My Device & Location History ──" -ForegroundColor Yellow
+Write-Host "`n    ── I. Find My Device & Location History ──" -ForegroundColor Yellow
 
 if (Confirm-Debloat "Disable Find My Device location tracking and location history?") {
     Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\FindMyDevice" "AllowFindMyDevice" 0
